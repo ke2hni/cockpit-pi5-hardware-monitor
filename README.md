@@ -54,7 +54,12 @@ This plugin is designed only for Raspberry Pi 5 systems running Cockpit.
 - `python3`
 - `vcgencmd` (Raspberry Pi firmware tool)
 
-The installer will check for required dependencies and install any missing required packages before continuing, when possible.
+Installer behavior:
+
+- The installer will verify all required components before continuing
+- Missing required packages will be installed automatically using apt when available
+- All required commands are re-checked before the build process starts
+- If a required component cannot be installed or is unavailable, the installer will stop with a clear error message
 
 ### Optional (recommended)
 
@@ -67,7 +72,11 @@ Provides full NVMe SMART health data, including:
 - power-on hours
 - error counts
 
-If optional packages are missing, the installer will explain what they are used for and ask before installing them when an interactive terminal is available.
+Optional package behavior:
+
+- If `smartmontools` is already installed, it will be used automatically
+- If missing, the installer will prompt to install it when running in a normal terminal
+- If the installer is run in a non-interactive environment, optional packages will be skipped and the install will continue
 
 ---
 
@@ -79,10 +88,16 @@ cd cockpit-pi5-hardware-monitor
 sudo ./install.sh
 ```
 
+What to expect during install:
+
+- Required dependencies are checked and installed automatically if missing
+- Optional packages may prompt for installation (interactive terminals only)
+- The Cockpit plugin is built and installed
+- The history service and timer are installed and started
+- One initial history sample is created automatically
+
 Notes:
 
-- The installer will check for required dependencies and install any missing required packages before continuing
-- You may be prompted to install optional packages
 - Cockpit is not restarted automatically; refresh your browser if needed
 
 ---
