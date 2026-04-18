@@ -350,7 +350,7 @@ package_installed_version() {
 
 package_candidate_version() {
   local pkg="$1"
-  apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}'
+  apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; found=1; exit} END {if (!found) print ""}' || true
 }
 
 package_needs_upgrade() {
