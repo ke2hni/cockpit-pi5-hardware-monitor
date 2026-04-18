@@ -55,6 +55,7 @@ This plugin is designed only for Raspberry Pi 5 systems running Cockpit.
 - `nodejs` and `npm`
 - `python3`
 - `vcgencmd` (Raspberry Pi firmware tool)
+- `git`
 
 #### Installer behavior
 
@@ -86,22 +87,9 @@ Provides full NVMe SMART health data, including:
 
 ## Install
 
-### Recommended (No Git Required)
+### Recommended
 
-Works on a fresh system with minimal setup:
-
-```bash
-sudo apt update && sudo apt install -y wget unzip
-autoload() { :; }
-wget -O pi-monitor.zip https://github.com/ke2hni/cockpit-pi5-hardware-monitor/archive/refs/heads/main.zip
-unzip pi-monitor.zip
-cd cockpit-pi5-hardware-monitor-main
-sudo ./install.sh
-```
-
----
-
-### Alternative (Using Git)
+Install `git` first, then clone the repository and run the installer:
 
 ```bash
 sudo apt update
