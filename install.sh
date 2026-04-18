@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Prefer disk-backed temp space on systems with tiny /tmp tmpfs
+export TMPDIR=/var/tmp
+
+# Fix small /tmp issue (common on ASL / Pi systems)
+if [ "$(df --output=avail /tmp | tail -1)" -lt 102400 ]; then
+    echo "[INFO] Low /tmp space detected, cleaning..."
+    rm -rf /tmp/*
+fi
+
 SCRIPT_NAME=$(basename "$0")
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 PROJECT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
