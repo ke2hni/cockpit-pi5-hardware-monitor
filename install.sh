@@ -21,6 +21,7 @@ APT_UPDATED=0
 INTERACTIVE=0
 HISTORY_COMPONENTS_INSTALLED=0
 INSTALL_DEGRADED=0
+VIDEO_GROUP_CHANGED=0
 [[ -t 0 && -t 1 ]] && INTERACTIVE=1
 
 REAL_USER="${SUDO_USER:-}"
@@ -292,6 +293,21 @@ ask_yes_no() {
   done
 }
 
+ask_input() {
+  local prompt="$1"
+  local default_value="${2:-}"
+  local answer=""
+
+  if [[ "$INTERACTIVE" -ne 1 ]]; then
+    printf '%s\n' "$default_value"
+    return 0
+  fi
+
+  read -r -p "$prompt " answer || true
+  answer=${answer:-$default_value}
+  printf '%s\n' "$answer"
+}
+
 run_checked() {
   local description="$1"
   local failure_class="$2"
@@ -501,6 +517,86 @@ print_startup_context() {
   fi
 }
 
+resolve_cockpit_login_user() {
+  local entered_user=""
+
+  if [[ -n "$REAL_USER" ]]; then
+    if [[ "$INTERACTIVE" -eq 1 ]]; then
+      if ask_yes_no "Detected Cockpit login user as $REAL_USER. Is this the user who will log into Cockpit? [Y/n]" "Y"; then
+        add_summary_unique SUMMARY_ALREADY_OK "Cockpit login user selected: $REAL_USER"
+        return 0
+      fi
+
+      entered_user=$(ask_input "Enter the Linux username that will log into Cockpit:" "")
+      entered_user=$(printf '%s' "$entered_user" | xargs || true)
+      if [[ -n "$entered_user" ]]; then
+        if id "$entered_user" >/dev/null 2>&1; then
+          REAL_USER="$entered_user"
+          add_summary_unique SUMMARY_ALREADY_OK "Cockpit login user selected: $REAL_USER"
+          return 0
+        fi
+        warn "The specified Cockpit login user does not exist on this system: $entered_user"
+      fi
+    else
+      add_summary_unique SUMMARY_ALREADY_OK "Cockpit login user selected: $REAL_USER"
+      return 0
+    fi
+  fi
+
+  if [[ "$INTERACTIVE" -eq 1 ]]; then
+    entered_user=$(ask_input "Enter the Linux username that will log into Cockpit for voltage/clock telemetry checks (leave blank to skip):" "")
+    entered_user=$(printf '%s' "$entered_user" | xargs || true)
+    if [[ -n "$entered_user" ]]; then
+      if id "$entered_user" >/dev/null 2>&1; then
+        REAL_USER="$entered_user"
+        add_summary_unique SUMMARY_ALREADY_OK "Cockpit login user selected: $REAL_USER"
+        return 0
+      fi
+      warn "The specified Cockpit login user does not exist on this system: $entered_user"
+    fi
+  fi
+
+  REAL_USER=""
+  warn "Could not determine the Cockpit login user. The user who logs into Cockpit must be in group video for voltage, clock, firmware, and ring-oscillator telemetry to function properly."
+  add_summary_unique SUMMARY_ACTIONS "If Cockpit telemetry is missing, add the Cockpit login user to group video: usermod -aG video USERNAME, then fully log out or reboot."
+}
+
+ensure_cockpit_user_video_group() {
+  if [[ -z "$REAL_USER" ]]; then
+    return 0
+  fi
+
+  if ! id "$REAL_USER" >/dev/null 2>&1; then
+    warn "The selected Cockpit login user does not exist on this system: $REAL_USER"
+    return 0
+  fi
+
+  if id -nG "$REAL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx 'video'; then
+    add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER is in group video"
+    return 0
+  fi
+
+  warn "The Cockpit login user $REAL_USER is not in group video. The plugin needs that group for voltage, clock, firmware, and ring-oscillator telemetry to function properly."
+
+  if [[ "$INTERACTIVE" -eq 1 ]]; then
+    if ask_yes_no "Add user $REAL_USER to group video now so Cockpit telemetry works correctly? [Y/n]" "Y"; then
+      if usermod -aG video "$REAL_USER"; then
+        VIDEO_GROUP_CHANGED=1
+        add_summary_unique SUMMARY_UPDATED "Added user $REAL_USER to group video"
+        add_summary_unique SUMMARY_ACTIONS "User $REAL_USER must fully log out of Cockpit and Linux, or reboot, before the new video-group membership takes effect."
+      else
+        warn "Failed to add user $REAL_USER to group video automatically."
+        add_summary_unique SUMMARY_ACTIONS "Run manually: usermod -aG video $REAL_USER, then fully log out or reboot."
+      fi
+    else
+      warn "User $REAL_USER was left out of group video. Voltage, clock, firmware, and ring-oscillator telemetry may be missing in Cockpit for that login."
+      add_summary_unique SUMMARY_ACTIONS "If needed later: usermod -aG video $REAL_USER, then fully log out or reboot."
+    fi
+  else
+    add_summary_unique SUMMARY_ACTIONS "The Cockpit login user must be in group video for full telemetry. Run: usermod -aG video $REAL_USER, then fully log out or reboot."
+  fi
+}
+
 check_pi5_hardware() {
   local model=""
   model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)
@@ -647,8 +743,8 @@ validate_vcgencmd_contexts() {
     if id -nG "$REAL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx 'video'; then
       add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER is in group video"
     else
-      warn "User $REAL_USER is not in group video. That may prevent non-root vcgencmd access on some systems."
-      add_summary_unique SUMMARY_ACTIONS "If needed: usermod -aG video $REAL_USER, then reboot or fully log out and back in."
+      warn "User $REAL_USER is not in group video. The Cockpit login user must be in group video for voltage, clock, firmware, and ring-oscillator telemetry to function properly."
+      add_summary_unique SUMMARY_ACTIONS "Add the Cockpit login user to group video: usermod -aG video $REAL_USER, then reboot or fully log out and back in."
     fi
   else
     warn "Could not determine a non-root install user from SUDO_USER/logname, so non-root vcgencmd validation was skipped."
@@ -816,13 +912,18 @@ main() {
   ensure_required_package "systemd" "systemd" "systemctl" "systemctl --version"
   ensure_required_package "cockpit-bridge" "Cockpit bridge" "cockpit-bridge" "cockpit-bridge --packages >/dev/null"
 
+  resolve_cockpit_login_user
+  ensure_cockpit_user_video_group
+
   check_nvme_presence
   validate_vcgencmd_contexts
 
   if [[ "$NVME_PRESENT" -eq 1 ]]; then
     ensure_optional_package "smartmontools" "NVMe storage was detected, so smartmontools is recommended for fuller SMART and health data." "Y"
+    ensure_optional_package "nvme-cli" "NVMe storage was detected, so nvme-cli is recommended for fuller NVMe telemetry and smart-log support." "Y"
   else
     add_summary_unique SUMMARY_SKIPPED "smartmontools prompt skipped because no NVMe device was detected"
+    add_summary_unique SUMMARY_SKIPPED "nvme-cli prompt skipped because no NVMe device was detected"
   fi
 
   build_and_install_plugin
