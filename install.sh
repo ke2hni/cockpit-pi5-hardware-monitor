@@ -576,7 +576,7 @@ ensure_cockpit_user_video_group() {
     return 0
   fi
 
-  warn "The Cockpit login user $REAL_USER is not in group video. The plugin needs that group for voltage, clock, firmware, and ring-oscillator telemetry to function properly."
+    log "The Cockpit login user $REAL_USER is not in group video. The plugin needs that group for voltage, clock, firmware, and ring-oscillator telemetry to function properly."
 
   if [[ "$INTERACTIVE" -eq 1 ]]; then
     if ask_yes_no "Add user $REAL_USER to group video now so Cockpit telemetry works correctly? [Y/n]" "Y"; then
