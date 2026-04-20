@@ -1197,6 +1197,7 @@ async function readMonitorData(): Promise<MonitorState> {
 
         echo "NVME_SMART_BEGIN"
         sudo -n smartctl -a /dev/nvme0n1 2>/dev/null || smartctl -a /dev/nvme0n1 2>/dev/null || true
+        sudo -n nvme smart-log /dev/nvme0n1 2>/dev/null || nvme smart-log /dev/nvme0n1 2>/dev/null || true
         echo "NVME_SMART_END"
       fi
 
@@ -1340,14 +1341,14 @@ async function readMonitorData(): Promise<MonitorState> {
 
     const nvmeSmartRaw = nvmeSmartLines.join("\n");
     const nvmeHealth = parseSmartHealth(nvmeSmartRaw);
-    const nvmeSmartTemp = cleanNvmeTemp(parseSmartValue(nvmeSmartRaw, "Temperature"));
+    const nvmeSmartTemp = cleanNvmeTemp(parseSmartValue(nvmeSmartRaw, "Temperature", "temperature"));
     const nvmePercentageUsed =
-        parseSmartValue(nvmeSmartRaw, "Percentage Used") !== "--"
-            ? parseSmartValue(nvmeSmartRaw, "Percentage Used")
+        parseSmartValue(nvmeSmartRaw, "Percentage Used", "percentage_used") !== "--"
+            ? parseSmartValue(nvmeSmartRaw, "Percentage Used", "percentage_used")
             : parseSmartValue(nvmeSmartRaw, "Percentage Used Endurance Indicator");
-    const nvmePowerOnHours = formatHours(parseSmartValue(nvmeSmartRaw, "Power On Hours"));
-    const nvmeUnsafeShutdowns = parseSmartValue(nvmeSmartRaw, "Unsafe Shutdowns");
-    const nvmeMediaErrors = parseSmartValue(nvmeSmartRaw, "Media and Data Integrity Errors");
+    const nvmePowerOnHours = formatHours(parseSmartValue(nvmeSmartRaw, "Power On Hours", "power_on_hours"));
+    const nvmeUnsafeShutdowns = parseSmartValue(nvmeSmartRaw, "Unsafe Shutdowns", "unsafe_shutdowns");
+    const nvmeMediaErrors = parseSmartValue(nvmeSmartRaw, "Media and Data Integrity Errors", "media_errors");
 
     const coreV = extractNumericValue(data.PMIC_CORE_V || "");
     const coreA = extractNumericValue(data.PMIC_CORE_A || "");
