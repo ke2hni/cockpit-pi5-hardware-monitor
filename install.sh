@@ -382,12 +382,41 @@ ensure_command_works() {
   fi
 }
 
+command_version() {
+  local command_name="$1"
+  local version_cmd="${2:-$1 --version}"
+  bash -lc "$version_cmd" 2>/dev/null | head -n 1 || true
+}
+
+command_is_usable() {
+  local command_name="$1"
+  local test_cmd="$2"
+
+  command -v "$command_name" >/dev/null 2>&1 || return 1
+  bash -lc "$test_cmd" >/dev/null 2>&1
+}
+
 ensure_required_package() {
   local pkg="$1"
   local friendly="$2"
   local command_name="$3"
   local test_cmd="$4"
-  local installed_version candidate_version
+  local version_cmd="${5:-$command_name --version}"
+  local installed_version candidate_version detected_version
+
+  if command_is_usable "$command_name" "$test_cmd"; then
+    detected_version=$(command_version "$command_name" "$version_cmd")
+    if [[ -n "$detected_version" ]]; then
+      add_summary_unique SUMMARY_ALREADY_OK "$friendly command available ($detected_version)"
+    else
+      add_summary_unique SUMMARY_ALREADY_OK "$friendly command available"
+    fi
+
+    if ! package_is_installed "$pkg"; then
+      add_summary_unique SUMMARY_SKIPPED "$pkg package install skipped because $command_name already works"
+      return 0
+    fi
+  fi
 
   apt_update_once
 
