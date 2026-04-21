@@ -519,6 +519,7 @@ validate_sudoers_file() {
 
 ensure_cockpit_user_nvme_sudo() {
   local smartctl_path="" nvme_path="" sudoers_line="" tmp_file="" current_file_text=""
+  local nvme_dev="" smart_out="" nvme_out="" smart_ok=0 nvme_ok=0
 
   if [[ "$NVME_PRESENT" -ne 1 || -z "$REAL_USER" ]]; then
     return 0
@@ -530,18 +531,24 @@ ensure_cockpit_user_nvme_sudo() {
 
   smartctl_path=$(command -v smartctl 2>/dev/null || true)
   nvme_path=$(command -v nvme 2>/dev/null || true)
+  nvme_dev=$(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2 == "disk" && $1 ~ /^nvme/ {print "/dev/" $1; exit}')
+  [[ -n "$nvme_dev" ]] || nvme_dev="/dev/nvme0n1"
 
   if [[ -z "$smartctl_path" ]]; then
     warn "smartctl is not available, so NVMe SMART sudo validation was skipped."
     return 0
   fi
 
-  if sudo -u "$REAL_USER" sudo -n "$smartctl_path" -a /dev/nvme0n1 >/dev/null 2>&1; then
-    add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run smartctl without a sudo password"
-    if [[ -n "$nvme_path" ]] && sudo -u "$REAL_USER" sudo -n "$nvme_path" smart-log /dev/nvme0n1 >/dev/null 2>&1; then
-      add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run nvme smart-log without a sudo password"
-    elif [[ -n "$nvme_path" ]]; then
-      add_summary_unique SUMMARY_ALREADY_OK "nvme-cli installed at $nvme_path"
+  smart_out=$(sudo -u "$REAL_USER" sudo -n "$smartctl_path" -a "$nvme_dev" 2>&1 || true)
+  if [[ -n "$smart_out" ]] && grep -Eiq 'SMART|Temperature|Model Number|Serial Number|Firmware Version|Percentage Used' <<<"$smart_out"; then
+    add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run usable smartctl NVMe queries without a sudo password"
+    if [[ -n "$nvme_path" ]]; then
+      nvme_out=$(sudo -u "$REAL_USER" sudo -n "$nvme_path" smart-log "$nvme_dev" 2>&1 || true)
+      if [[ -n "$nvme_out" ]] && grep -Eiq 'critical_warning|temperature|available_spare|percentage_used|power_on_hours' <<<"$nvme_out"; then
+        add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run usable nvme smart-log queries without a sudo password"
+      else
+        add_summary_unique SUMMARY_ALREADY_OK "nvme-cli installed at $nvme_path"
+      fi
     fi
     return 0
   fi
@@ -596,21 +603,26 @@ ensure_cockpit_user_nvme_sudo() {
     add_summary_unique SUMMARY_ALREADY_OK "Limited sudoers rule already present for $REAL_USER NVMe SMART telemetry"
   fi
 
-  if sudo -u "$REAL_USER" sudo -n "$smartctl_path" -a /dev/nvme0n1 >/dev/null 2>&1; then
-    add_summary_unique SUMMARY_ALREADY_OK "Validated passwordless smartctl access for $REAL_USER"
-  else
-    warn "Passwordless smartctl access still failed for $REAL_USER after sudoers setup."
-    add_summary_unique SUMMARY_ACTIONS "Check sudoers policy for $REAL_USER if NVMe SMART fields are still missing in Cockpit."
+  smart_out=$(sudo -u "$REAL_USER" sudo -n "$smartctl_path" -a "$nvme_dev" 2>&1 || true)
+  if [[ -n "$smart_out" ]] && grep -Eiq 'SMART|Temperature|Model Number|Serial Number|Firmware Version|Percentage Used' <<<"$smart_out"; then
+    smart_ok=1
+    add_summary_unique SUMMARY_ALREADY_OK "Validated usable smartctl output for $REAL_USER on $nvme_dev"
   fi
 
   if [[ -n "$nvme_path" ]]; then
-    if sudo -u "$REAL_USER" sudo -n "$nvme_path" smart-log /dev/nvme0n1 >/dev/null 2>&1; then
-      add_summary_unique SUMMARY_ALREADY_OK "Validated passwordless nvme smart-log access for $REAL_USER"
-    else
-      warn "Passwordless nvme smart-log access still failed for $REAL_USER after sudoers setup."
-      add_summary_unique SUMMARY_ACTIONS "Check sudoers policy or nvme-cli path for $REAL_USER if nvme smart-log data is still missing in Cockpit."
+    nvme_out=$(sudo -u "$REAL_USER" sudo -n "$nvme_path" smart-log "$nvme_dev" 2>&1 || true)
+    if [[ -n "$nvme_out" ]] && grep -Eiq 'critical_warning|temperature|available_spare|percentage_used|power_on_hours' <<<"$nvme_out"; then
+      nvme_ok=1
+      add_summary_unique SUMMARY_ALREADY_OK "Validated usable nvme smart-log output for $REAL_USER on $nvme_dev"
     fi
   fi
+
+  if [[ "$smart_ok" -eq 1 || "$nvme_ok" -eq 1 ]]; then
+    return 0
+  fi
+
+  warn "NVMe SMART telemetry could not be validated for $REAL_USER. NVMe SMART fields may be unavailable in Cockpit."
+  add_summary_unique SUMMARY_ACTIONS "Check sudoers policy and NVMe tool access for $REAL_USER if NVMe SMART fields are missing in Cockpit."
 }
 
 print_startup_context() {
