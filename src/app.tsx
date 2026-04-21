@@ -309,23 +309,6 @@ function getIoTempStatusClass(tempText: string) {
     return "pi-card-status-danger";
 }
 
-/*  function parsePercentValue(percentText: string) {
- *  const match = percentText.match(/([-+]?\d+(?:\.\d+)?)\s*%/);
- *  return match ? Number(match[1]) : NaN;
- * }
- *
- * function getFanPwmStatusClass(percentText: string) {
- *  const percent = parsePercentValue(percentText);
- *
- *  if (!Number.isFinite(percent)) return "";
- *
- *  if (percent < 30) return "pi-card-status-info";
- *  if (percent < 50) return "pi-card-status-success";
- *  if (percent < 70) return "pi-card-status-warning";
- *  return "pi-card-status-danger";
- * }
-*/
-
 function getFanRpmStatusClass(rpmText: string) {
     const rpm = Number(rpmText);
 
@@ -435,11 +418,54 @@ function cleanNvmeCounterValue(raw: string) {
     return match[0].replace(/[^\d]/g, "");
 }
 
-function displayNvmeField(val: string, nvmePresent: string) {
-    if (nvmePresent !== "1") return "--";
-    if (!val || val === "--") return "Not Reported";
-    return val;
+function isBlank(val: string | undefined | null) {
+    return !val || val === "--" || val.trim() === "";
 }
+
+/*
+ * Storage-aware display helpers
+ */
+
+function displayStorageMount(mount: string, present: string) {
+    if (present !== "Yes") return "Not Available";
+    if (isBlank(mount)) return "Not Mounted";
+    return mount;
+}
+
+function displayStorageFsField(value: string, mount: string, present: string) {
+    if (present !== "Yes") return "Not Available";
+    if (isBlank(mount)) return "Not Mounted";
+    if (isBlank(value)) return "Not Reported";
+    return value;
+}
+
+function displayStorageHardwareField(value: string, present: string) {
+    if (present !== "Yes") return "Not Available";
+    if (isBlank(value)) return "Not Reported";
+    return value;
+}
+
+function detectPermissionIssue(raw: string) {
+    if (!raw) return false;
+
+    const text = raw.toLowerCase();
+
+    return text.includes("permission denied") ||
+        text.includes("a password is required") ||
+        text.includes("operation not permitted") ||
+        text.includes("not permitted");
+}
+
+function displayNvmeSmartField(value: string, present: string, permissionRequired: boolean) {
+    if (present !== "Yes") return "Not Available";
+    if (permissionRequired) return "Permission Required";
+    if (isBlank(value)) return "Not Reported";
+    return value;
+}
+
+/*
+ * Permission detection (simple + safe)
+ */
 
 function formatHours(raw: string) {
     const sanitized = cleanNvmeCounterValue(raw);
@@ -1226,8 +1252,8 @@ async function readMonitorData(): Promise<MonitorState> {
         fi
 
         echo "NVME_SMART_BEGIN"
-        sudo -n smartctl -a /dev/nvme0n1 2>/dev/null || smartctl -a /dev/nvme0n1 2>/dev/null || true
-        sudo -n nvme smart-log /dev/nvme0n1 2>/dev/null || nvme smart-log /dev/nvme0n1 2>/dev/null || true
+        sudo -n smartctl -a /dev/nvme0n1 || smartctl -a /dev/nvme0n1 || true
+        sudo -n nvme smart-log /dev/nvme0n1 || nvme smart-log /dev/nvme0n1 || true
         echo "NVME_SMART_END"
       fi
 
@@ -1382,6 +1408,14 @@ async function readMonitorData(): Promise<MonitorState> {
     const nvmePowerOnHours = formatHours(parseSmartValue(nvmeSmartRaw, "Power On Hours", "power_on_hours"));
     const nvmeUnsafeShutdowns = formatNvmeCounter(parseSmartValue(nvmeSmartRaw, "Unsafe Shutdowns", "unsafe_shutdowns"));
     const nvmeMediaErrors = formatNvmeCounter(parseSmartValue(nvmeSmartRaw, "Media and Data Integrity Errors", "media_errors"));
+    const nvmePermissionRequired =
+        detectPermissionIssue(nvmeSmartRaw) &&
+        nvmeHealth === "--" &&
+        nvmeSmartTemp === "--" &&
+        nvmePowerOnHours === "--" &&
+        nvmeUnsafeShutdowns === "--" &&
+        nvmeMediaErrors === "--" &&
+        nvmePercentageUsed === "--";
 
     const coreV = extractNumericValue(data.PMIC_CORE_V || "");
     const coreA = extractNumericValue(data.PMIC_CORE_A || "");
@@ -1433,35 +1467,138 @@ async function readMonitorData(): Promise<MonitorState> {
             fanPresent: formatYesNoFromZeroOne(data.FAN_PRESENT || "0"),
         },
         nvme: {
-            model: data.NVME_MODEL || "--",
-            capacity: formatBytesDecimal(data.NVME_SIZE_BYTES || ""),
-            firmware: data.NVME_FIRMWARE || "--",
-            health: nvmeHealth,
-            healthDetail: nvmeHealth !== "--" ? "SMART status" : "--",
-            smartTemp: nvmeSmartTemp,
-            percentageUsed: displayNvmeField(nvmePercentageUsed, data.NVME_PRESENT),
-            powerOnHours: displayNvmeField(nvmePowerOnHours, data.NVME_PRESENT),
-            unsafeShutdowns: displayNvmeField(nvmeUnsafeShutdowns, data.NVME_PRESENT),
-            mediaErrors: displayNvmeField(nvmeMediaErrors, data.NVME_PRESENT),
-            mountedAt: data.NVME_MOUNT_POINT || "--",
+            model: displayStorageHardwareField(
+                data.NVME_MODEL,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0")
+            ),
+
+            capacity: displayStorageHardwareField(
+                formatBytesDecimal(data.NVME_SIZE_BYTES || ""),
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0")
+            ),
+
+            firmware: displayStorageHardwareField(
+                data.NVME_FIRMWARE,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0")
+            ),
+
+            health: displayNvmeSmartField(
+                nvmeHealth,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0"),
+                nvmePermissionRequired
+            ),
+
+            healthDetail: nvmePermissionRequired
+                ? "Permission Required"
+                : (nvmeHealth !== "--" ? "SMART status" : "Not Reported"),
+
+            smartTemp: displayNvmeSmartField(
+                nvmeSmartTemp,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0"),
+                nvmePermissionRequired
+            ),
+
+            percentageUsed: (() => {
+                const nvmePresent = formatYesNoFromZeroOne(data.NVME_PRESENT || "0");
+
+                if (nvmePresent !== "Yes") return "Not Available";
+                if (isBlank(data.NVME_MOUNT_POINT)) return "Not Mounted";
+                if (nvmePermissionRequired) return "Permission Required";
+                if (isBlank(nvmePercentageUsed)) return "Not Reported";
+
+                return nvmePercentageUsed;
+            })(),
+
+            powerOnHours: displayNvmeSmartField(
+                nvmePowerOnHours,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0"),
+                nvmePermissionRequired
+            ),
+
+            unsafeShutdowns: displayNvmeSmartField(
+                nvmeUnsafeShutdowns,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0"),
+                nvmePermissionRequired
+            ),
+
+            mediaErrors: displayNvmeSmartField(
+                nvmeMediaErrors,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0"),
+                nvmePermissionRequired
+            ),
+
+            mountedAt: displayStorageMount(
+                data.NVME_MOUNT_POINT,
+                formatYesNoFromZeroOne(data.NVME_PRESENT || "0")
+            ),
         },
         sd: {
             present: formatYesNoFromZeroOne(data.SD_PRESENT || "0"),
-            device: data.SD_MOUNT_DEVICE || data.SD_DEVICE || "--",
-            capacity: formatBytesDecimal(data.SD_SIZE_BYTES || ""),
-            cardUsed: data.SD_USED_PCT || "--",
-            vendor: decodeSdVendor(data.SD_VENDOR || ""),
-            name: data.SD_NAME || "--",
-            serial: data.SD_SERIAL || "--",
-            mountedAt: data.SD_MOUNT_POINT || "--",
+
+            device: displayStorageHardwareField(
+                data.SD_MOUNT_DEVICE || data.SD_DEVICE,
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
+
+            capacity: displayStorageHardwareField(
+                formatBytesDecimal(data.SD_SIZE_BYTES || ""),
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
+
+            cardUsed: displayStorageFsField(
+                data.SD_USED_PCT,
+                data.SD_MOUNT_POINT,
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
+
+            vendor: displayStorageHardwareField(
+                decodeSdVendor(data.SD_VENDOR || ""),
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
+
+            name: displayStorageHardwareField(
+                data.SD_NAME,
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
+
+            serial: displayStorageHardwareField(
+                data.SD_SERIAL,
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
+
+            mountedAt: displayStorageMount(
+                data.SD_MOUNT_POINT,
+                formatYesNoFromZeroOne(data.SD_PRESENT || "0")
+            ),
         },
         usbStorage: {
             present: formatYesNoFromZeroOne(data.USB_STORAGE_PRESENT || "0"),
-            model: data.USB_STORAGE_MODEL || "--",
-            capacity: formatBytesDecimal(data.USB_STORAGE_SIZE_BYTES || ""),
-            freeSpace: formatBytesDecimal(data.USB_STORAGE_FREE_BYTES || ""),
-            devicePath: data.USB_STORAGE_DEVICE || "--",
-            mountedAt: data.USB_STORAGE_MOUNT_POINT || "--",
+
+            model: displayStorageHardwareField(
+                data.USB_STORAGE_MODEL,
+                formatYesNoFromZeroOne(data.USB_STORAGE_PRESENT || "0")
+            ),
+
+            capacity: displayStorageHardwareField(
+                formatBytesDecimal(data.USB_STORAGE_SIZE_BYTES || ""),
+                formatYesNoFromZeroOne(data.USB_STORAGE_PRESENT || "0")
+            ),
+
+            freeSpace: displayStorageFsField(
+                formatBytesDecimal(data.USB_STORAGE_FREE_BYTES || ""),
+                data.USB_STORAGE_MOUNT_POINT,
+                formatYesNoFromZeroOne(data.USB_STORAGE_PRESENT || "0")
+            ),
+
+            devicePath: displayStorageHardwareField(
+                data.USB_STORAGE_DEVICE,
+                formatYesNoFromZeroOne(data.USB_STORAGE_PRESENT || "0")
+            ),
+
+            mountedAt: displayStorageMount(
+                data.USB_STORAGE_MOUNT_POINT,
+                formatYesNoFromZeroOne(data.USB_STORAGE_PRESENT || "0")
+            ),
         },
         pcie: {
             currentLinkSpeed: data.PCIE_CURRENT_LINK_SPEED || "--",
@@ -1736,7 +1873,7 @@ export const Application = () => {
                             <FlexItem flex={{ default: "flex_1" }}>
                                 <Title headingLevel="h1">Raspberry Pi 5 Hardware Monitor</Title>
                                 <Content component={ContentVariants.p}>
-                                    Ver. 2.2 - April 20, 2026
+                                    Ver. 2.4 - April 20, 2026
                                 </Content>
                             </FlexItem>
 
@@ -2348,7 +2485,7 @@ export const Application = () => {
                                 <Content>
                                     <Title headingLevel="h2">NVMe Drive</Title>
                                     <Content component={ContentVariants.small}>
-                                        Drive identity, firmware, temperature, and SMART status
+                                        Drive is detected. Certain data only appears when mounted.
                                     </Content>
                                 </Content>
                                 <Gallery hasGutter minWidths={{ default: "220px" }}>
@@ -2423,7 +2560,7 @@ export const Application = () => {
                                 <Content>
                                     <Title headingLevel="h2">SD Card</Title>
                                     <Content component={ContentVariants.small}>
-                                        microSD presence, identity, capacity, and usage
+                                        Drive is detected. Certain data only appears when mounted.
                                     </Content>
                                 </Content>
                                 <Gallery hasGutter minWidths={{ default: "220px" }}>
@@ -2485,7 +2622,7 @@ export const Application = () => {
                                 <Content>
                                     <Title headingLevel="h2">External USB Storage</Title>
                                     <Content component={ContentVariants.small}>
-                                        Connected USB storage device details
+                                        Drive is detected. Certain data only appears when mounted.
                                     </Content>
                                 </Content>
                                 <Gallery hasGutter minWidths={{ default: "220px" }}>
