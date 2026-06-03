@@ -18,7 +18,7 @@ import { Title } from "@patternfly/react-core/dist/esm/components/Title/index.js
 import { Flex, FlexItem } from "@patternfly/react-core/dist/esm/layouts/Flex/index.js";
 import { Gallery } from "@patternfly/react-core/dist/esm/layouts/Gallery/index.js";
 
-const APP_VERSION = "3.0";
+const APP_VERSION = "3.5";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/ke2hni/cockpit-pi5-hardware-monitor/main/version.txt";
 
 /*
@@ -2797,7 +2797,7 @@ export const Application = () => {
                             <FlexItem flex={{ default: "flex_1" }}>
                                 <Title headingLevel="h1">Raspberry Pi 5 Hardware Monitor</Title>
                                 <Content component={ContentVariants.p} style={{ marginBottom: "1rem" }}>
-                                    Ver. {APP_VERSION} - April 22, 2026
+                                    Ver. {APP_VERSION} - June 2, 2026
                                     <br />
                                     GitHub Ver.: {githubVersionStatus}
                                 </Content>
