@@ -1026,6 +1026,7 @@ main() {
   check_conflicting_plugin_copies
 
   ensure_required_package "make" "GNU make" "make" "make --version"
+  ensure_required_package "gettext" "GNU gettext" "msgfmt" "msgfmt --version"
   ensure_required_package "nodejs" "Node.js" "node" "node --version"
   ensure_required_package "npm" "npm" "npm" "npm --version"
   ensure_required_package "python3" "Python 3" "python3" "python3 --version"
