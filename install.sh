@@ -539,17 +539,25 @@ ensure_cockpit_user_nvme_sudo() {
     return 0
   fi
 
-  smart_out=$(sudo -u "$REAL_USER" sudo -n "$smartctl_path" -a "$nvme_dev" 2>&1 || true)
+  # -k invalidates any cached sudo timestamp for this nested sudo test.
+  # Combined with -n, this succeeds only when the Cockpit user truly has
+  # passwordless permission for the command.
+  smart_out=$(sudo -u "$REAL_USER" sudo -n -k "$smartctl_path" -a "$nvme_dev" 2>&1 || true)
   if [[ -n "$smart_out" ]] && grep -Eiq 'SMART|Temperature|Model Number|Serial Number|Firmware Version|Percentage Used' <<<"$smart_out"; then
+    smart_ok=1
     add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run usable smartctl NVMe queries without a sudo password"
-    if [[ -n "$nvme_path" ]]; then
-      nvme_out=$(sudo -u "$REAL_USER" sudo -n "$nvme_path" smart-log "$nvme_dev" 2>&1 || true)
-      if [[ -n "$nvme_out" ]] && grep -Eiq 'critical_warning|temperature|available_spare|percentage_used|power_on_hours' <<<"$nvme_out"; then
-        add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run usable nvme smart-log queries without a sudo password"
-      else
-        add_summary_unique SUMMARY_ALREADY_OK "nvme-cli installed at $nvme_path"
-      fi
+  fi
+
+  if [[ -n "$nvme_path" ]]; then
+    nvme_out=$(sudo -u "$REAL_USER" sudo -n -k "$nvme_path" smart-log "$nvme_dev" 2>&1 || true)
+    if [[ -n "$nvme_out" ]] && grep -Eiq 'critical_warning|temperature|available_spare|percentage_used|power_on_hours' <<<"$nvme_out"; then
+      nvme_ok=1
+      add_summary_unique SUMMARY_ALREADY_OK "User $REAL_USER can run usable nvme smart-log queries without a sudo password"
     fi
+  fi
+
+  # Only skip sudoers setup when every installed NVMe telemetry tool already works.
+  if [[ "$smart_ok" -eq 1 && ( -z "$nvme_path" || "$nvme_ok" -eq 1 ) ]]; then
     return 0
   fi
 
@@ -603,14 +611,14 @@ ensure_cockpit_user_nvme_sudo() {
     add_summary_unique SUMMARY_ALREADY_OK "Limited sudoers rule already present for $REAL_USER NVMe SMART telemetry"
   fi
 
-  smart_out=$(sudo -u "$REAL_USER" sudo -n "$smartctl_path" -a "$nvme_dev" 2>&1 || true)
+  smart_out=$(sudo -u "$REAL_USER" sudo -n -k "$smartctl_path" -a "$nvme_dev" 2>&1 || true)
   if [[ -n "$smart_out" ]] && grep -Eiq 'SMART|Temperature|Model Number|Serial Number|Firmware Version|Percentage Used' <<<"$smart_out"; then
     smart_ok=1
     add_summary_unique SUMMARY_ALREADY_OK "Validated usable smartctl output for $REAL_USER on $nvme_dev"
   fi
 
   if [[ -n "$nvme_path" ]]; then
-    nvme_out=$(sudo -u "$REAL_USER" sudo -n "$nvme_path" smart-log "$nvme_dev" 2>&1 || true)
+    nvme_out=$(sudo -u "$REAL_USER" sudo -n -k "$nvme_path" smart-log "$nvme_dev" 2>&1 || true)
     if [[ -n "$nvme_out" ]] && grep -Eiq 'critical_warning|temperature|available_spare|percentage_used|power_on_hours' <<<"$nvme_out"; then
       nvme_ok=1
       add_summary_unique SUMMARY_ALREADY_OK "Validated usable nvme smart-log output for $REAL_USER on $nvme_dev"
