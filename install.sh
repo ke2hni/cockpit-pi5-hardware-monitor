@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Pi 5 Hardware Monitor Installer
+# Installer Version: 1.1.0
+# Updated: 2026-08-14
+# Changes: Fixed persistent NVMe/smartctl Cockpit sudo permissions and cached-sudo detection.
+
 # Prefer disk-backed temp space on systems with tiny /tmp tmpfs
 export TMPDIR=/var/tmp
 
