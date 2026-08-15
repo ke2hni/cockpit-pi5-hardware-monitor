@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 # Pi 5 Hardware Monitor Installer
-# Installer Version: 1.1.0
+# Installer Version: 1.1.1
 # Updated: 2026-08-14
-# Changes: Fixed persistent NVMe/smartctl Cockpit sudo permissions and cached-sudo detection.
+# Changes: Fixed NVMe permissions and Bookworm nvme-cli NVMe-oF boot-service side effects.
 
 # Prefer disk-backed temp space on systems with tiny /tmp tmpfs
 export TMPDIR=/var/tmp
@@ -638,6 +638,67 @@ ensure_cockpit_user_nvme_sudo() {
   add_summary_unique SUMMARY_ACTIONS "Check sudoers policy and NVMe tool access for $REAL_USER if NVMe SMART fields are missing in Cockpit."
 }
 
+
+cleanup_bookworm_nvmeof_services() {
+  local os_id="" codename="" unit="" enabled_state="" discovery_configured=0 fabrics_available=0 changed=0
+
+  [[ "${NVME_PRESENT:-0}" -eq 1 ]] || return 0
+  command -v nvme >/dev/null 2>&1 || return 0
+
+  if [[ -r /etc/os-release ]]; then
+    os_id=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2; exit}' /etc/os-release)
+    codename=$(awk -F= '$1 == "VERSION_CODENAME" {gsub(/"/, "", $2); print $2; exit}' /etc/os-release)
+  fi
+
+  # This cleanup is intentionally limited to Debian 12/Bookworm, where the
+  # nvme-cli package enables NVMe-over-Fabrics boot units that can fail on a
+  # Raspberry Pi kernel even though local PCIe NVMe access works normally.
+  [[ "$os_id" == "debian" && "$codename" == "bookworm" ]] || return 0
+
+  # Preserve NVMe-oF automatically if discovery.conf contains any real
+  # (non-blank, non-comment) configuration.
+  if [[ -f /etc/nvme/discovery.conf ]] && grep -Eq '^[[:space:]]*[^#[:space:]]' /etc/nvme/discovery.conf 2>/dev/null; then
+    discovery_configured=1
+  fi
+
+  # Also preserve the services if the kernel actually provides NVMe Fabrics.
+  if [[ -d /sys/module/nvme_fabrics ]] || modinfo nvme-fabrics >/dev/null 2>&1 || modinfo nvme_fabrics >/dev/null 2>&1; then
+    fabrics_available=1
+  fi
+
+  if [[ "$discovery_configured" -eq 1 || "$fabrics_available" -eq 1 ]]; then
+    add_summary_unique SUMMARY_ALREADY_OK "Bookworm NVMe-oF configuration/support detected; NVMe-oF boot services left unchanged"
+    return 0
+  fi
+
+  for unit in nvmf-autoconnect.service nvmefc-boot-connections.service; do
+    if systemctl list-unit-files "$unit" --no-legend 2>/dev/null | grep -q "^$unit"; then
+      enabled_state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+
+      if [[ "$enabled_state" == "enabled" || "$enabled_state" == "enabled-runtime" || "$enabled_state" == "linked" || "$enabled_state" == "linked-runtime" ]]; then
+        log "Disabling unused Bookworm NVMe-oF boot service: $unit"
+        if systemctl disable --now "$unit" >/dev/null 2>&1; then
+          changed=1
+          add_summary_unique SUMMARY_UPDATED "Disabled unused Bookworm NVMe-oF boot service: $unit"
+        else
+          warn "Could not disable unused Bookworm NVMe-oF boot service: $unit"
+          add_summary_unique SUMMARY_ACTIONS "Disable $unit manually if it continues to show a failed NVMe-oF boot service."
+        fi
+      fi
+
+      # Clear an already-recorded failed state so Cockpit does not continue
+      # showing a stale failure after the unnecessary unit has been disabled.
+      systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+    fi
+  done
+
+  if [[ "$changed" -eq 1 ]]; then
+    add_summary_unique SUMMARY_ALREADY_OK "Local PCIe NVMe monitoring remains enabled; only unused NVMe-over-Fabrics boot services were disabled"
+  else
+    add_summary_unique SUMMARY_ALREADY_OK "No enabled unused Bookworm NVMe-oF boot services required cleanup"
+  fi
+}
+
 print_startup_context() {
   log "Installer path: $SCRIPT_PATH"
   log "Project root: $PROJECT_ROOT"
@@ -1055,6 +1116,7 @@ main() {
   if [[ "$NVME_PRESENT" -eq 1 ]]; then
     ensure_optional_package "smartmontools" "NVMe storage was detected, so smartmontools is recommended for fuller SMART and health data." "Y"
     ensure_optional_package "nvme-cli" "NVMe storage was detected, so nvme-cli is recommended for fuller NVMe telemetry and smart-log support." "Y"
+    cleanup_bookworm_nvmeof_services
     ensure_cockpit_user_nvme_sudo
   else
     add_summary_unique SUMMARY_SKIPPED "smartmontools prompt skipped because no NVMe device was detected"
