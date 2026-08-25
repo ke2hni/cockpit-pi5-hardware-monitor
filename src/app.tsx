@@ -539,7 +539,7 @@ function classifyBootDevice(rootDevice: string) {
 function buildSmartKeyPattern(key: string) {
     return key
             .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-            .replace(/\s+/g, "\\\\s+");
+            .replace(/\s+/g, "\\s+");
 }
 
 function parseSmartValue(raw: string, ...keys: string[]) {
